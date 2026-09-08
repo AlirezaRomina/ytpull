@@ -16,16 +16,66 @@ import collections
 import os
 import pathlib
 import re
+import shutil
 import signal
 import subprocess
+import threading
+import time
 import uuid
+from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-app = FastAPI()
+CLEANUP_INTERVAL_S = 10 * 60   # run the janitor every 10 minutes
+MAX_JOB_AGE_S = 30 * 60        # delete anything older than 30 minutes
+
+
+def cleanup_once() -> None:
+    """Delete job directories older than 30 minutes, and their dict entries.
+
+    Without this the disk slowly fills with old videos until the instance
+    dies. Age comes from the directory's modification time. A job that is
+    still downloading or processing is never deleted, even if it's old —
+    yanking files out from under a running yt-dlp would produce a confusing
+    error instead of a slow download.
+    """
+    if not JOBS_DIR.exists():
+        return
+    now = time.time()
+    for path in JOBS_DIR.iterdir():
+        if not path.is_dir():
+            continue
+        job = jobs.get(path.name)
+        if job is not None and job["status"] in ("downloading", "processing"):
+            continue
+        if now - path.stat().st_mtime > MAX_JOB_AGE_S:
+            shutil.rmtree(path, ignore_errors=True)
+            jobs.pop(path.name, None)
+
+
+def cleanup_loop() -> None:
+    while True:
+        time.sleep(CLEANUP_INTERVAL_S)
+        try:
+            cleanup_once()
+        except Exception as exc:  # noqa: BLE001
+            # A bad cleanup pass (e.g. a permissions hiccup) shouldn't kill
+            # the janitor for the life of the server; log it and carry on.
+            print(f"cleanup error: {exc!r}", flush=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # daemon=True means the thread dies with the server instead of
+    # keeping the process alive on shutdown.
+    threading.Thread(target=cleanup_loop, daemon=True).start()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 JOBS_DIR = pathlib.Path("/tmp/jobs")
 BASE_DIR = pathlib.Path(__file__).parent  # where index.html lives
