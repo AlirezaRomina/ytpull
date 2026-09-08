@@ -75,7 +75,7 @@
     border-color: var(--accent);
   }
 
-  #download, #getfile {
+  #download, #getfile, #cancel {
     width: 100%;
     padding: 14px;
     font-size: 1rem;
@@ -85,6 +85,25 @@
     background: var(--accent);
     color: #fff;
     cursor: pointer;
+  }
+
+  /* Done is green, distinct from the in-progress accent colour */
+  #getfile {
+    background: #16a34a;
+  }
+
+  /* Cancel is outlined red: clearly destructive, visually secondary */
+  #cancel {
+    background: #fff;
+    color: #b91c1c;
+    border: 1px solid #b91c1c;
+    margin-top: 16px;
+  }
+
+  #cancel:disabled {
+    color: var(--muted);
+    border-color: var(--border);
+    cursor: not-allowed;
   }
 
   #download:disabled {
@@ -134,7 +153,7 @@
     text-align: right;
   }
 
-  #processing {
+  #processing, #cancelled {
     margin: 0;
     color: var(--muted);
   }
@@ -171,7 +190,9 @@
       <span id="pct">0%</span>
     </div>
     <p id="processing" hidden>Processing</p>
+    <p id="cancelled" hidden>Cancelled</p>
     <p id="error" hidden></p>
+    <button type="button" id="cancel" hidden>Cancel</button>
   </section>
 
   <button type="button" id="getfile" hidden>Get file</button>
@@ -181,7 +202,7 @@
   const el = {};
   for (const id of ["fmt-mp4", "fmt-mp3", "url", "download", "status",
                     "title", "progress", "fill", "pct", "processing",
-                    "error", "getfile"]) {
+                    "cancelled", "error", "getfile", "cancel"]) {
     el[id] = document.getElementById(id);
   }
 
@@ -203,11 +224,14 @@
     el.download.disabled = el.url.value.trim() === "";
   });
 
-  // --- show exactly one of: progress bar / "Processing" / error
+  // --- show exactly one of: progress bar / "Processing" / "Cancelled" / error
   function showOnly(which) {
     el.progress.hidden = which !== "progress";
     el.processing.hidden = which !== "processing";
+    el.cancelled.hidden = which !== "cancelled";
     el.error.hidden = which !== "error";
+    // Cancel is only offered while the job is actually running
+    el.cancel.hidden = !(which === "progress" || which === "processing");
   }
 
   function applyStatus(job) {
@@ -218,6 +242,8 @@
       el.pct.textContent = job.percent + "%";
     } else if (job.status === "processing") {
       showOnly("processing");
+    } else if (job.status === "cancelled") {
+      showOnly("cancelled");
     } else if (job.status === "error") {
       showOnly("error");
       el.error.textContent = job.error || "Something went wrong.";
@@ -252,7 +278,7 @@
       el.status.hidden = true;
       el.getfile.hidden = false;
       el.download.disabled = el.url.value.trim() === "";
-    } else if (job.status === "error") {
+    } else if (job.status === "error" || job.status === "cancelled") {
       stopPolling();
       el.download.disabled = el.url.value.trim() === "";
     }
@@ -292,8 +318,20 @@
     }
 
     jobId = (await res.json()).job_id;
+    el.cancel.disabled = false;
     pollTimer = setInterval(poll, 1000);  // poll every 1s per the spec
     poll();                               // and once right away
+  });
+
+  el.cancel.addEventListener("click", async () => {
+    el.cancel.disabled = true;  // no double-cancels
+    try {
+      await fetch("/api/jobs/" + jobId + "/cancel", { method: "POST" });
+    } catch (err) {
+      el.cancel.disabled = false;  // couldn't reach the server; allow retry
+    }
+    // No UI change here: the next poll (within 1s) reports "cancelled"
+    // and the normal status handling takes over.
   });
 
   // Navigating to the file URL triggers the browser's normal download

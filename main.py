@@ -13,8 +13,10 @@ How a job flows:
 """
 
 import collections
+import os
 import pathlib
 import re
+import signal
 import subprocess
 import uuid
 from urllib.parse import quote
@@ -108,13 +110,25 @@ def run_download(job_id: str, url: str, fmt: str) -> None:
         return
     job["title"] = title_proc.stdout.strip() or None
 
+    # The user may have cancelled while the title fetch was running (there
+    # is no process handle to kill during subprocess.run, so the cancel
+    # endpoint just sets the flag and we honour it here).
+    if job["_cancelled"]:
+        job["status"] = "cancelled"
+        return
+
     # --- Step 2: the real download. stderr is merged into stdout
     # (stderr=STDOUT) so there is only one stream to read; reading two
     # pipes from one thread can deadlock when the unread one fills up.
+    # start_new_session=True puts yt-dlp in its own process group, so
+    # cancelling can kill yt-dlp AND the ffmpeg child it spawns — killing
+    # just yt-dlp would leave ffmpeg running as an orphan.
     proc = subprocess.Popen(
         build_command(url, fmt, out_dir),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        start_new_session=True,
     )
+    job["_proc"] = proc  # so the cancel endpoint can kill it
 
     # Keep only the last few output lines: if yt-dlp fails, these are
     # what we show as the error message.
@@ -142,6 +156,12 @@ def run_download(job_id: str, url: str, fmt: str) -> None:
                 job["percent"] = min(100, int(float(match.group(1))))
 
     returncode = proc.wait()
+
+    # A cancelled process exits non-zero (it was killed); report that as
+    # "cancelled", not as an error.
+    if job["_cancelled"]:
+        job["status"] = "cancelled"
+        return
 
     if returncode != 0:
         job["status"] = "error"
@@ -184,9 +204,34 @@ def create_job(req: JobRequest, background_tasks: BackgroundTasks):
         "error": None,
         "_format": req.format,
         "_file_path": None,
+        "_proc": None,
+        "_cancelled": False,
     }
     background_tasks.add_task(run_download, job_id, req.url, req.format)
     return {"job_id": job_id}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="no such job")
+
+    # Only a running job can be cancelled; done/error/cancelled stay as-is.
+    if job["status"] in ("downloading", "processing"):
+        job["_cancelled"] = True
+        job["status"] = "cancelled"
+        proc = job["_proc"]
+        if proc is not None and proc.poll() is None:
+            # Kill the whole process group (yt-dlp + its ffmpeg child).
+            # If it already exited in the meantime, that's fine too.
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        # If _proc is still None, we're mid title-fetch; run_download sees
+        # the flag and stops before starting the real download.
+    return {"status": job["status"]}
 
 
 @app.get("/api/jobs/{job_id}")
