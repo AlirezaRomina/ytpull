@@ -1,11 +1,12 @@
-# Deploying to a fresh Ubuntu 24.04 EC2 instance
+# Deploying to a fresh Amazon Linux 2023 EC2 instance
 
-Everything below is run on the instance over SSH unless it says otherwise.
-Plain HTTP on the instance's public IP — no nginx, TLS, domain, or Docker,
-per the spec.
+Everything below is run on the instance over SSH (as the default
+`ec2-user`) unless it says otherwise. Plain HTTP on the instance's public
+IP — no nginx, TLS, domain, or Docker, per the spec.
 
-Two decisions in here differ from the letter of the spec, both explained in
-place: the Python version (step 2) and how yt-dlp is installed (step 2).
+One thing in here deviates from a plain "install it" step and is explained
+in place: ffmpeg isn't in Amazon Linux's package repositories at all, so it
+comes from a static build (step 2).
 
 ---
 
@@ -20,8 +21,8 @@ Security Groups → Inbound rules):
 | 8000 | TCP | 0.0.0.0/0 (anywhere) | The app itself. Anywhere, so your phone works from cellular data too — phone IPs change constantly, so pinning this to an IP would lock you out. |
 
 **Why port 8000 and not the normal web port 80:** only the root user may
-listen on ports below 1024, and the app runs as the unprivileged `ubuntu`
-user (a process that talks to the whole internet should not run as root).
+listen on ports below 1024, and the app runs as the unprivileged `ec2-user`
+(a process that talks to the whole internet should not run as root).
 The usual fix is putting nginx in front, which the spec rules out — so the
 app listens on 8000 and the URL carries the port:
 `http://<public-ip>:8000`.
@@ -36,44 +37,65 @@ empty room.
 
 SSH in, then:
 
+**Python 3.11** — Amazon Linux 2023's default `python3` is an older 3.9,
+but it packages 3.11 directly (this matches the spec's Python 3.11
+exactly, no third-party repositories needed):
+
 ```
-sudo apt update
-sudo apt install -y python3-venv ffmpeg
+sudo dnf install -y python3.11
+```
+
+**ffmpeg** — this is the one awkward install: Amazon Linux 2023 does not
+package ffmpeg at all, so `dnf install ffmpeg` finds nothing. The standard
+workaround is a "static build" — a pre-compiled ffmpeg that carries
+everything it needs inside one file, published at johnvansickle.com (the
+build the ffmpeg project's own website points people to). yt-dlp needs
+both programs from it, `ffmpeg` and `ffprobe`:
+
+```
+cd /tmp
+curl -LO https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+tar -xf ffmpeg-release-amd64-static.tar.xz
+sudo mv ffmpeg-*-static/ffmpeg ffmpeg-*-static/ffprobe /usr/local/bin/
+rm -rf ffmpeg-release-amd64-static.tar.xz ffmpeg-*-static
+```
+
+**yt-dlp** — from its GitHub releases, not dnf (which doesn't carry it
+either). YouTube changes its internals every few weeks and old yt-dlp
+versions simply stop working, so you want the latest release and an easy
+way to update:
+
+```
 sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
 sudo chmod a+rx /usr/local/bin/yt-dlp
 ```
 
-Two decisions here worth explaining:
+When downloads start failing months from now, the fix will usually be just:
 
-- **Python version.** The spec says Python 3.11, but Ubuntu 24.04 ships
-  Python 3.12 as its system `python3`, and getting 3.11 onto it would mean
-  adding a third-party package archive. The app uses nothing specific to
-  3.11, so it runs on the system 3.12 as-is — one less moving part, and
-  security updates come from Ubuntu itself.
+```
+sudo yt-dlp -U
+```
 
-- **yt-dlp from GitHub, not `apt install yt-dlp`.** Ubuntu's packaged
-  yt-dlp is frozen at whatever version existed when the OS was released.
-  YouTube changes its internals every few weeks and old yt-dlp versions
-  simply stop working, so you want the latest release and an easy way to
-  update. The command above downloads the official standalone binary;
-  when downloads start failing months from now, the fix will usually be
-  just:
+Sanity check — all three should print a version:
 
-  ```
-  sudo yt-dlp -U
-  ```
+```
+python3.11 --version && ffmpeg -version | head -1 && yt-dlp --version
+```
 
 ---
 
 ## 3. Get the app onto the instance and set it up
 
 ```
-sudo apt install -y git
-git clone https://github.com/AlirezaRomina/ytpull.git /home/ubuntu/ytdownloader
-cd /home/ubuntu/ytdownloader
-python3 -m venv .venv
+sudo dnf install -y git
+git clone https://github.com/AlirezaRomina/ytpull.git /home/ec2-user/ytdownloader
+cd /home/ec2-user/ytdownloader
+python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
+
+(Note the venv is created with `python3.11`, not plain `python3` — plain
+`python3` would silently give you the old 3.9.)
 
 Quick smoke test before wiring up systemd (Ctrl+C to stop it afterwards):
 
@@ -91,9 +113,10 @@ single most common "it works on the box but not from my browser" mistake.
 
 ## 4. systemd unit — restart on reboot and on crash
 
-systemd is Ubuntu's built-in service manager. Registering the app with it
-means it starts when the instance boots and gets restarted automatically if
-it ever crashes — nobody has to SSH in and start it by hand.
+systemd is Amazon Linux's built-in service manager. Registering the app
+with it means it starts when the instance boots and gets restarted
+automatically if it ever crashes — nobody has to SSH in and start it by
+hand.
 
 Create the unit file:
 
@@ -106,9 +129,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/ytdownloader
-ExecStart=/home/ubuntu/ytdownloader/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+User=ec2-user
+WorkingDirectory=/home/ec2-user/ytdownloader
+ExecStart=/home/ec2-user/ytdownloader/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 # Restart on any exit, crash or clean, after a 3-second pause
 # (the pause stops a start-crash-start loop from spinning at full speed)
 Restart=always
