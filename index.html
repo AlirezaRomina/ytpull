@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Downloader</title>
+<style>
+  :root {
+    --accent: #2563eb; /* the one accent colour */
+    --border: #d4d4d8;
+    --text: #18181b;
+    --muted: #71717a;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* The browser's own [hidden] rule loses to any id selector that sets
+     display (like #progress's flex), so restate it with !important. */
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 Helvetica, Arial, sans-serif;
+    background: #fafafa;
+    color: var(--text);
+  }
+
+  main {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 64px 24px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0 0 32px;
+  }
+
+  /* Format toggle: two buttons, the selected one filled, the other outlined */
+  .toggle {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .toggle button {
+    flex: 1;
+    padding: 12px;
+    font-size: 1rem;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .toggle button.selected {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  #url {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+
+  #url:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  #download, #getfile {
+    width: 100%;
+    padding: 14px;
+    font-size: 1rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  #download:disabled {
+    background: var(--border);
+    cursor: not-allowed;
+  }
+
+  #status {
+    margin-top: 40px;
+  }
+
+  #title {
+    margin: 0 0 16px;
+    font-weight: 600;
+    /* keep long titles on one tidy line */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .bar {
+    flex: 1;
+    height: 10px;
+    background: #e4e4e7;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  #fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    /* the spec's one allowed animation: the bar filling smoothly */
+    transition: width 0.4s ease;
+  }
+
+  #pct {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums; /* stops the number jiggling */
+    min-width: 3.5em;
+    text-align: right;
+  }
+
+  #processing {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  #error {
+    margin: 0;
+    color: #b91c1c;
+    white-space: pre-wrap; /* yt-dlp errors can be a few lines */
+  }
+
+  #getfile {
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>YouTube Downloader</h1>
+
+  <div class="toggle">
+    <button type="button" id="fmt-mp4" class="selected">Video (MP4)</button>
+    <button type="button" id="fmt-mp3">Audio (MP3)</button>
+  </div>
+
+  <input id="url" type="text" placeholder="Paste YouTube link"
+         autocomplete="off" spellcheck="false">
+
+  <button type="button" id="download" disabled>Download</button>
+
+  <section id="status" hidden>
+    <p id="title"></p>
+    <div id="progress" hidden>
+      <div class="bar"><div id="fill"></div></div>
+      <span id="pct">0%</span>
+    </div>
+    <p id="processing" hidden>Processing</p>
+    <p id="error" hidden></p>
+  </section>
+
+  <button type="button" id="getfile" hidden>Get file</button>
+</main>
+
+<script>
+  const el = {};
+  for (const id of ["fmt-mp4", "fmt-mp3", "url", "download", "status",
+                    "title", "progress", "fill", "pct", "processing",
+                    "error", "getfile"]) {
+    el[id] = document.getElementById(id);
+  }
+
+  let format = "mp4";   // default per the spec: Video
+  let jobId = null;
+  let pollTimer = null;
+
+  // --- format toggle: exactly one button selected at a time
+  function selectFormat(fmt) {
+    format = fmt;
+    el["fmt-mp4"].classList.toggle("selected", fmt === "mp4");
+    el["fmt-mp3"].classList.toggle("selected", fmt === "mp3");
+  }
+  el["fmt-mp4"].addEventListener("click", () => selectFormat("mp4"));
+  el["fmt-mp3"].addEventListener("click", () => selectFormat("mp3"));
+
+  // --- download button enabled only when the input is non-empty
+  el.url.addEventListener("input", () => {
+    el.download.disabled = el.url.value.trim() === "";
+  });
+
+  // --- show exactly one of: progress bar / "Processing" / error
+  function showOnly(which) {
+    el.progress.hidden = which !== "progress";
+    el.processing.hidden = which !== "processing";
+    el.error.hidden = which !== "error";
+  }
+
+  function applyStatus(job) {
+    el.title.textContent = job.title || "";
+    if (job.status === "downloading") {
+      showOnly("progress");
+      el.fill.style.width = job.percent + "%";
+      el.pct.textContent = job.percent + "%";
+    } else if (job.status === "processing") {
+      showOnly("processing");
+    } else if (job.status === "error") {
+      showOnly("error");
+      el.error.textContent = job.error || "Something went wrong.";
+    }
+  }
+
+  function stopPolling() {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  async function poll() {
+    let job;
+    try {
+      const res = await fetch("/api/jobs/" + jobId);
+      if (!res.ok) throw new Error("status " + res.status);
+      job = await res.json();
+    } catch (err) {
+      // server unreachable or job vanished: stop and say so
+      stopPolling();
+      el.download.disabled = false;
+      showOnly("error");
+      el.error.textContent = "Lost contact with the server (" + err.message + ").";
+      return;
+    }
+
+    applyStatus(job);
+
+    if (job.status === "done") {
+      stopPolling();
+      // per the spec: the Get file button replaces the status area
+      el.status.hidden = true;
+      el.getfile.hidden = false;
+      el.download.disabled = el.url.value.trim() === "";
+    } else if (job.status === "error") {
+      stopPolling();
+      el.download.disabled = el.url.value.trim() === "";
+    }
+  }
+
+  el.download.addEventListener("click", async () => {
+    // reset the UI for a fresh job
+    el.download.disabled = true;
+    el.getfile.hidden = true;
+    el.title.textContent = "";
+    el.fill.style.width = "0%";
+    el.pct.textContent = "0%";
+    showOnly("progress");
+    el.status.hidden = false;
+
+    let res;
+    try {
+      res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: el.url.value.trim(), format: format }),
+      });
+    } catch (err) {
+      showOnly("error");
+      el.error.textContent = "Could not reach the server (" + err.message + ").";
+      el.download.disabled = false;
+      return;
+    }
+
+    if (!res.ok) {
+      // e.g. the 400 for a non-YouTube URL — show the API's message
+      const body = await res.json().catch(() => ({}));
+      showOnly("error");
+      el.error.textContent = body.detail || "Request failed (" + res.status + ").";
+      el.download.disabled = false;
+      return;
+    }
+
+    jobId = (await res.json()).job_id;
+    pollTimer = setInterval(poll, 1000);  // poll every 1s per the spec
+    poll();                               // and once right away
+  });
+
+  // Navigating to the file URL triggers the browser's normal download
+  // behaviour, because the API sends Content-Disposition: attachment.
+  el.getfile.addEventListener("click", () => {
+    window.location.href = "/api/jobs/" + jobId + "/file";
+  });
+</script>
+</body>
+</html>

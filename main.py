@@ -26,6 +26,7 @@ from pydantic import BaseModel
 app = FastAPI()
 
 JOBS_DIR = pathlib.Path("/tmp/jobs")
+BASE_DIR = pathlib.Path(__file__).parent  # where index.html lives
 
 # The in-memory job store from the spec. Keys are job_id strings, values are
 # dicts shaped like the GET /api/jobs/{id} response, plus private fields
@@ -159,6 +160,13 @@ def run_download(job_id: str, url: str, fmt: str) -> None:
     job["_file_path"] = str(out_file)
     job["status"] = "done"
     job["percent"] = 100
+
+
+@app.get("/")
+def index():
+    """Serve the frontend. Same server as the API, so the page's fetch()
+    calls are same-origin and need no CORS setup."""
+    return FileResponse(BASE_DIR / "index.html", media_type="text/html")
 
 
 @app.post("/api/jobs")
