@@ -69,7 +69,8 @@ These are the two commands. Do not substitute your own format selectors.
 
 **MP4 (highest quality video):**
 ```
-yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b" \
+yt-dlp --no-playlist \
+       -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b" \
        --merge-output-format mp4 \
        --newline \
        -o "/tmp/jobs/{job_id}/output.%(ext)s" \
@@ -78,7 +79,8 @@ yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b" \
 
 **MP3 (highest quality audio):**
 ```
-yt-dlp -f "ba/b" \
+yt-dlp --no-playlist \
+       -f "ba/b" \
        -x --audio-format mp3 --audio-quality 0 \
        --newline \
        -o "/tmp/jobs/{job_id}/output.%(ext)s" \
