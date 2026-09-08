@@ -1,2 +1,7 @@
 fastapi==0.115.6
 uvicorn==0.34.0
+# yt-dlp is deliberately NOT pinned to a version: YouTube changes its
+# internals every few weeks and old yt-dlp versions stop working, so every
+# fresh install should get the latest. Update an existing install with:
+#   .venv/bin/pip install -U yt-dlp
+yt-dlp

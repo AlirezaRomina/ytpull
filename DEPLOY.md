@@ -60,26 +60,26 @@ sudo mv ffmpeg-*-static/ffmpeg ffmpeg-*-static/ffprobe /usr/local/bin/
 rm -rf ffmpeg-release-amd64-static.tar.xz ffmpeg-*-static
 ```
 
-**yt-dlp** — from its GitHub releases, not dnf (which doesn't carry it
-either). YouTube changes its internals every few weeks and old yt-dlp
-versions simply stop working, so you want the latest release and an easy
-way to update:
+**yt-dlp** — nothing to install in this step. It is listed in
+`requirements.txt`, so pip installs it into the app's own virtualenv in
+step 3, and the app runs it with the virtualenv's Python 3.11. This is
+deliberate: the standalone yt-dlp binary picks its Python interpreter from
+the system, and Amazon Linux's system Python is 3.9, which yt-dlp refuses
+to run under. Installing it inside the virtualenv ties it to the same
+3.11 the app uses, with no guesswork.
+
+YouTube changes its internals every few weeks and old yt-dlp versions
+simply stop working. When downloads start failing months from now, the fix
+will usually be just:
 
 ```
-sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-sudo chmod a+rx /usr/local/bin/yt-dlp
+cd /home/ec2-user/ytdownloader && .venv/bin/pip install -U yt-dlp && sudo systemctl restart ytdownloader
 ```
 
-When downloads start failing months from now, the fix will usually be just:
+Sanity check for this step — both should print a version:
 
 ```
-sudo yt-dlp -U
-```
-
-Sanity check — all three should print a version:
-
-```
-python3.11 --version && ffmpeg -version | head -1 && yt-dlp --version
+python3.11 --version && ffmpeg -version | head -1
 ```
 
 ---
@@ -95,7 +95,14 @@ python3.11 -m venv .venv
 ```
 
 (Note the venv is created with `python3.11`, not plain `python3` — plain
-`python3` would silently give you the old 3.9.)
+`python3` would silently give you the old 3.9, which yt-dlp refuses to
+run under.)
+
+Check yt-dlp landed in the virtualenv:
+
+```
+.venv/bin/python -m yt_dlp --version
+```
 
 Quick smoke test before wiring up systemd (Ctrl+C to stop it afterwards):
 

@@ -19,6 +19,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -31,6 +32,15 @@ from pydantic import BaseModel
 
 CLEANUP_INTERVAL_S = 10 * 60   # run the janitor every 10 minutes
 MAX_JOB_AGE_S = 30 * 60        # delete anything older than 30 minutes
+
+# How yt-dlp is invoked. NOT the bare name "yt-dlp": that would let the
+# system PATH pick the program, and the standalone yt-dlp binary in turn
+# asks the system for "python3" — which on the EC2 box is the ancient 3.9
+# that yt-dlp refuses to run under. Instead, yt-dlp is pip-installed into
+# this app's own virtualenv (see requirements.txt) and run with
+# sys.executable — the exact interpreter the app itself is running under —
+# so there is no guesswork anywhere in the chain.
+YTDLP = [sys.executable, "-m", "yt_dlp"]
 
 
 def cleanup_once() -> None:
@@ -112,7 +122,7 @@ def build_command(url: str, fmt: str, out_dir: pathlib.Path) -> list[str]:
     """
     if fmt == "mp4":
         return [
-            "yt-dlp", "--no-playlist",
+            *YTDLP, "--no-playlist",
             "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
             "--merge-output-format", "mp4",
             "--newline",
@@ -120,7 +130,7 @@ def build_command(url: str, fmt: str, out_dir: pathlib.Path) -> list[str]:
             url,
         ]
     return [
-        "yt-dlp", "--no-playlist",
+        *YTDLP, "--no-playlist",
         "-f", "ba/b",
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--newline",
@@ -146,7 +156,7 @@ def run_download(job_id: str, url: str, fmt: str) -> None:
     # fail the same way, so we report the error now instead of trying.
     try:
         title_proc = subprocess.run(
-            ["yt-dlp", "--no-playlist", "--print", "%(title)s",
+            [*YTDLP, "--no-playlist", "--print", "%(title)s",
              "--skip-download", url],
             capture_output=True, text=True, timeout=60,
         )
