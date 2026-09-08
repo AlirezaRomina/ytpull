@@ -40,7 +40,13 @@ MAX_JOB_AGE_S = 30 * 60        # delete anything older than 30 minutes
 # this app's own virtualenv (see requirements.txt) and run with
 # sys.executable — the exact interpreter the app itself is running under —
 # so there is no guesswork anywhere in the chain.
-YTDLP = [sys.executable, "-m", "yt_dlp"]
+#
+# --js-runtimes deno: YouTube's player wraps parts of extraction in
+# JavaScript challenges that yt-dlp needs a JS engine to solve; without one
+# it warns, and extraction fails more and more often. Deno is the runtime
+# the yt-dlp project recommends; it must be installed on the machine
+# (see DEPLOY.md) — yt-dlp finds it on the PATH.
+YTDLP = [sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno"]
 
 
 def cleanup_once() -> None:

@@ -60,6 +60,24 @@ sudo mv ffmpeg-*-static/ffmpeg ffmpeg-*-static/ffprobe /usr/local/bin/
 rm -rf ffmpeg-release-amd64-static.tar.xz ffmpeg-*-static
 ```
 
+**Deno** — a JavaScript runtime that yt-dlp needs: YouTube wraps parts of
+its player in JavaScript challenges, and yt-dlp uses Deno (the runtime the
+yt-dlp project recommends) to solve them. Without it yt-dlp warns "no JS
+runtime available" and extraction fails more and more often. Not in dnf
+either, so it comes from Deno's GitHub releases as a single binary:
+
+```
+sudo dnf install -y unzip
+cd /tmp
+curl -LO https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip
+unzip -o deno-x86_64-unknown-linux-gnu.zip
+sudo mv deno /usr/local/bin/
+rm deno-x86_64-unknown-linux-gnu.zip
+deno --version
+```
+
+(As with ffmpeg, that's the x86_64 build, correct for a t3.small.)
+
 **yt-dlp** — nothing to install in this step. It is listed in
 `requirements.txt`, so pip installs it into the app's own virtualenv in
 step 3, and the app runs it with the virtualenv's Python 3.11. This is
