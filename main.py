@@ -33,6 +33,8 @@ from pydantic import BaseModel
 CLEANUP_INTERVAL_S = 10 * 60   # run the janitor every 10 minutes
 MAX_JOB_AGE_S = 30 * 60        # delete anything older than 30 minutes
 
+BASE_DIR = pathlib.Path(__file__).parent  # holds index.html and cookies.txt
+
 # How yt-dlp is invoked. NOT the bare name "yt-dlp": that would let the
 # system PATH pick the program, and the standalone yt-dlp binary in turn
 # asks the system for "python3" — which on the EC2 box is the ancient 3.9
@@ -47,6 +49,24 @@ MAX_JOB_AGE_S = 30 * 60        # delete anything older than 30 minutes
 # the yt-dlp project recommends; it must be installed on the machine
 # (see DEPLOY.md) — yt-dlp finds it on the PATH.
 YTDLP = [sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno"]
+
+# Optional YouTube cookies, for when YouTube shows the "Sign in to confirm
+# you're not a bot" page (common from datacenter IPs like EC2). Entirely
+# opt-in: put a cookies.txt in the project root and every yt-dlp call
+# presents it; leave it out and nothing changes.
+COOKIES_FILE = BASE_DIR / "cookies.txt"
+
+
+def ytdlp(*args: str) -> list[str]:
+    """The yt-dlp command with the caller's arguments, plus --cookies if a
+    cookies.txt is present.
+
+    The file is checked on every call rather than once at startup, so
+    adding or removing it takes effect on the next download without
+    restarting the server.
+    """
+    cookies = ["--cookies", str(COOKIES_FILE)] if COOKIES_FILE.is_file() else []
+    return [*YTDLP, *cookies, *args]
 
 
 def cleanup_once() -> None:
@@ -88,13 +108,20 @@ async def lifespan(app: FastAPI):
     # daemon=True means the thread dies with the server instead of
     # keeping the process alive on shutdown.
     threading.Thread(target=cleanup_loop, daemon=True).start()
+    # Say which cookie state we booted in — on a headless server this line
+    # in the logs answers "are my cookies actually being used?". The file
+    # is re-checked per download, so adding it later works without a
+    # restart; this only reports how things stood at startup.
+    if COOKIES_FILE.is_file():
+        print(f"cookies: using {COOKIES_FILE}", flush=True)
+    else:
+        print("cookies: none (no cookies.txt; that's fine)", flush=True)
     yield
 
 
 app = FastAPI(lifespan=lifespan)
 
 JOBS_DIR = pathlib.Path("/tmp/jobs")
-BASE_DIR = pathlib.Path(__file__).parent  # where index.html lives
 
 # The in-memory job store from the spec. Keys are job_id strings, values are
 # dicts shaped like the GET /api/jobs/{id} response, plus private fields
@@ -127,22 +154,22 @@ def build_command(url: str, fmt: str, out_dir: pathlib.Path) -> list[str]:
     as a single argument — nothing in it can be interpreted by a shell.
     """
     if fmt == "mp4":
-        return [
-            *YTDLP, "--no-playlist",
+        return ytdlp(
+            "--no-playlist",
             "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
             "--merge-output-format", "mp4",
             "--newline",
             "-o", f"{out_dir}/output.%(ext)s",
             url,
-        ]
-    return [
-        *YTDLP, "--no-playlist",
+        )
+    return ytdlp(
+        "--no-playlist",
         "-f", "ba/b",
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--newline",
         "-o", f"{out_dir}/output.%(ext)s",
         url,
-    ]
+    )
 
 
 def run_download(job_id: str, url: str, fmt: str) -> None:
@@ -162,8 +189,8 @@ def run_download(job_id: str, url: str, fmt: str) -> None:
     # fail the same way, so we report the error now instead of trying.
     try:
         title_proc = subprocess.run(
-            [*YTDLP, "--no-playlist", "--print", "%(title)s",
-             "--skip-download", url],
+            ytdlp("--no-playlist", "--print", "%(title)s",
+                  "--skip-download", url),
             capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired:
