@@ -91,7 +91,7 @@ simply stop working. When downloads start failing months from now, the fix
 will usually be just:
 
 ```
-cd /home/ec2-user/ytdownloader && .venv/bin/pip install -U yt-dlp && sudo systemctl restart ytdownloader
+cd /home/ec2-user/ytdownloader && .venv/bin/pip install -U yt-dlp yt-dlp-ejs && sudo systemctl restart ytdownloader
 ```
 
 Sanity check for this step — both should print a version:

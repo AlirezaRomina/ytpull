@@ -3,5 +3,10 @@ uvicorn==0.34.0
 # yt-dlp is deliberately NOT pinned to a version: YouTube changes its
 # internals every few weeks and old yt-dlp versions stop working, so every
 # fresh install should get the latest. Update an existing install with:
-#   .venv/bin/pip install -U yt-dlp
+#   .venv/bin/pip install -U yt-dlp yt-dlp-ejs
 yt-dlp
+# yt-dlp-ejs is the JavaScript yt-dlp runs inside Deno to solve YouTube's
+# extraction challenges. yt-dlp does not bundle it. Installing it here means
+# it's present at deploy time with no fetching over the network mid-download.
+# Unpinned for the same reason as yt-dlp — update the two together.
+yt-dlp-ejs

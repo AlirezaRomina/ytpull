@@ -43,12 +43,30 @@ BASE_DIR = pathlib.Path(__file__).parent  # holds index.html and cookies.txt
 # sys.executable — the exact interpreter the app itself is running under —
 # so there is no guesswork anywhere in the chain.
 #
-# --js-runtimes deno: YouTube's player wraps parts of extraction in
-# JavaScript challenges that yt-dlp needs a JS engine to solve; without one
-# it warns, and extraction fails more and more often. Deno is the runtime
-# the yt-dlp project recommends; it must be installed on the machine
-# (see DEPLOY.md) — yt-dlp finds it on the PATH.
-YTDLP = [sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno"]
+# Solving YouTube's JavaScript challenges takes two separate pieces:
+#
+#   --js-runtimes deno        the ENGINE that runs the JavaScript. Deno is
+#                             the runtime the yt-dlp project recommends; it
+#                             must be installed on the machine (DEPLOY.md).
+#   --remote-components       the SCRIPT that engine runs. yt-dlp doesn't
+#     ejs:github              ship it, and refuses to fetch it unless told
+#                             to. This allows fetching it from the official
+#                             yt-dlp/ejs GitHub releases, cached afterwards
+#                             in ~/.cache/yt-dlp/challenge-solver.
+#
+# The script also ships as the pip package yt-dlp-ejs, which is in
+# requirements.txt — that's the primary source, installed at deploy time
+# with no network fetch at download time. The flag stays as a fallback for
+# when yt-dlp wants a newer script than the installed package provides,
+# which is exactly the failure that produced "challenge solver script
+# (deno) ... were skipped" on the server. Drop the flag if you'd rather
+# yt-dlp never fetch code at runtime; downloads then depend on the pip
+# package being current.
+YTDLP = [
+    sys.executable, "-m", "yt_dlp",
+    "--js-runtimes", "deno",
+    "--remote-components", "ejs:github",
+]
 
 # Optional YouTube cookies, for when YouTube shows the "Sign in to confirm
 # you're not a bot" page (common from datacenter IPs like EC2). Entirely
